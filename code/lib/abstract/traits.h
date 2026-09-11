@@ -23,6 +23,13 @@ namespace Wally::Abstract {
         static constexpr container container_type = container::matrix;
         using element_type = T;
     };
+
+    template<typename T>
+    concept Container = requires(T x) {
+        typename container_traits<T>::container_type;
+        x.data();
+        x.size();
+    };
 }
 
 #endif

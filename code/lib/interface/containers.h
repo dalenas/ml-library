@@ -46,7 +46,7 @@ namespace Wally {
         const std::size_t rows() const;
         const std::size_t cols() const;
         const std::size_t size() const;
-        const std::size_t axis() const;
+        const Major axis() const;
         
         U* data();
         const U* data() const;

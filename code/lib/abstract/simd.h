@@ -31,6 +31,9 @@ namespace Wally::Abstract::SIMD {
         void _mm256_maskstoreu(float*, __m256, std::size_t);                           // masked store for remainder calcs
         void _mm256_maskstoreu(int*, __m256i, std::size_t);
 
+        template<typename T>
+        auto _mm256_setzero();
+
         __m256 _mm256_set1(float);
         __m256 _mm256_set1(int);
 
@@ -86,11 +89,11 @@ namespace Wally::Abstract::SIMD {
     template<typename ContainerY>
     void setzero(ContainerY&);
 
-    template<typename Container>
-    float sum(const Container&);
-
+    template<typename T>
+    T sum(const Vector<T>&);
     template<typename T>
     void sum(const Matrix<T>&, Vector<T>&);
+
     template<typename T>
     T dot(const Vector<T>&, const Vector<T>&);
     

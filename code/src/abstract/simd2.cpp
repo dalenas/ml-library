@@ -18,6 +18,14 @@ void SIMD::SIMD_::_mm256_maskstoreu(int* addr, __m256i a, std::size_t k) { _mm25
 __m256 SIMD::SIMD_::_mm256_set1(float k) { return _mm256_set1_ps(k); }
 __m256 SIMD::SIMD_::_mm256_set1(int k) { return _mm256_set1_ps(static_cast<float>(k)); }            // may want to change to m256i, which would require if constexpr conditions in scalar operations
 
+template<typename T>
+auto SIMD::SIMD_::_mm256_setzero() {
+    if constexpr(std::is_same_v<T, float>)
+        return _mm256_setzero_ps();
+    else
+        return _mm256_setzero_epi32();
+}
+
 __m256 SIMD::SIMD_::_mm256_add(const __m256 a, const __m256 b) { return _mm256_add_ps(a, b); }
 __m256 SIMD::SIMD_::_mm256_add(__m256 a, __m256i b) { 
     __m256 bf = _mm256_cvtepi32_ps(b);
@@ -64,6 +72,30 @@ __m256 SIMD::SIMD_::_mm256_div(__m256i a, __m256i b) {
     __m256 af = _mm256_cvtepi32_ps(a);
     __m256 bf = _mm256_cvtepi32_ps(b);
     return _mm256_div_ps(af, bf);
+}
+
+float SIMD::SIMD_::_mm256_sum(__m256 a) {
+    __m128 high = _mm256_castps256_ps128(a);
+    __m128 low = _mm256_extractf32x4_ps(a, 1);
+
+    __m128 sum_vec = _mm_add_ps(high, low);
+
+    sum_vec = _mm_hadd_ps(sum_vec, sum_vec);
+    sum_vec = _mm_hadd_ps(sum_vec, sum_vec);
+
+    return _mm_cvtss_f32(sum_vec);
+}
+
+int SIMD::SIMD_::_mm256_sum(__m256i a) {
+    __m128i high = _mm256_castsi256_si128(a);
+    __m128i low = _mm256_extracti32x4_epi32(a, 1);
+
+    __m128i sum_vec = _mm_add_epi32(high, low);
+
+    sum_vec = _mm_hadd_epi32(sum_vec, sum_vec);
+    sum_vec = _mm_hadd_epi32(sum_vec, sum_vec);
+
+    return _mm_cvtsi128_si32(sum_vec);
 }
 
 __m256 SIMD::SIMD_::_mm256_fmadd(__m256 a, __m256 b, __m256 c) { return _mm256_fmadd_ps(a, b, c); }
@@ -199,13 +231,119 @@ void setzero(ContainerY& Y) {
     }
 }
 
-template<typename Container>
-float sum(const Container&);
+template<typename T>
+T sum(const Vector<T>& A) {
+    const T* const a = A.data();
+
+    const std::size_t N = A.size();
+    const std::size_t REMAINDER = N % WIDTH;
+    const std::size_t EDGE = N - REMAINDER;
+
+    std::size_t i = 0;
+    auto sum_vec = SIMD_::_mm256_setzero<T>();
+    for(; i < EDGE; i += 8) {
+        const auto a_vec = SIMD_::_mm256_loadu(a + i);
+
+        sum_vec = SIMD_::_mm256_add(a_vec, sum_vec);
+    }
+
+    if(REMAINDER != 0) {
+        const auto a_vec = SIMD_::_mm256_maskloadu(a + i, REMAINDER);
+
+        sum_vec = SIMD_::_mm256_add(a_vec, sum_vec);
+    }
+
+    return SIMD_::_mm256_sum(sum_vec);
+}
 
 template<typename T>
-void sum(const Matrix<T>&, Vector<T>&);
+void sum(const Matrix<T>& A, Vector<T>& Y) {
+    const T* const a = A.data();
+    T* const y = Y.data();
+
+    const std::size_t N = A.rows();
+    const std::size_t M = A.cols();
+    
+    if(A.axis() == row) {
+        const std::size_t REMAINDER = M % WIDTH;
+        const std::size_t EDGE = M - REMAINDER;
+
+        for(std::size_t i = 0; i < N; ++i) {
+            const T* const a_row = a + i*M;
+
+            std::size_t j = 0;
+            for(; j < EDGE; j += 8) {
+                const auto a_vec = SIMD_::_mm256_loadu(a_row + j);
+                auto sum_vec = SIMD_::_mm256_loadu(y + j);
+
+                sum_vec = SIMD_::_mm256_add(a_vec, sum_vec);
+
+                SIMD_::__mm256_storeu(y + j, sum_vec);
+            }
+
+            if(REMAINDER != 0) {
+                const auto a_vec = SIMD_::_mm256_maskloadu(a_row + j, REMAINDER);
+                auto sum_vec = SIMD_::_mm256_maskloadu(y + j, REMAINDER);
+                
+                sum_vec = SIMD_::_mm256_add(a_vec, sum_vec);
+
+                SIMD_::_mm256_maskstoreu(y + j, sum_vec, REMAINDER);
+            }
+        }
+    }
+    else if(A.axis() == col) {
+        const std::size_t REMAINDER = N % WIDTH;
+        const std::size_t EDGE = N - REMAINDER;
+
+        for(std::size_t j = 0; j < M; ++j) {
+            const T* const a_col = a + j*N;
+
+            std::size_t i = 0;
+            auto sum_vec = SIMD_::_mm256_setzero<T>();
+            for(; i < EDGE; i += 8) {
+                const auto a_vec = SIMD_::_mm256_loadu(a_col + i);
+                
+                sum_vec = SIMD_::_mm256_add(a_vec, sum_vec);
+            }
+
+            if(REMAINDER != 0) {
+                const auto a_vec = SIMD_::_mm256_maskloadu(a_col + i);
+
+                sum_vec = SIMD_::_mm256_add(a_vec, sum_vec);
+            }
+
+            y[j] = SIMD_::_mm256_sum(sum_vec);
+        }
+    }
+}
+
 template<typename T>
-T dot(const Vector<T>&, const Vector<T>&);
+T dot(const Vector<T>& A, const Vector<T>& B) {
+    const T* const a = A.data();
+    const T* const b = B.data();
+
+    const std::size_t N = A.size();
+    const std::size_t REMAINDER = N % WIDTH;
+    const std::size_t EDGE = N - WIDTH;
+
+    std::size_t i = 0;
+    auto dot_vec = SIMD_::_mm256_setzero<T>();
+    for(; i < EDGE; i += 8) {
+        const auto a_vec = SIMD_::_mm256_loadu(a + i);
+        const auto b_vec = SIMD_::_mm256_loadu(b + i);
+
+        dot_vec = SIMD_::_mm256_hmadd(a_vec, b_vec, dot_vec);
+    }
+
+    if(REMAINDER != 0) {
+        const auto a_vec = SIMD_::_mm256_maskloadu(a + i, REMAINDER);
+        const auto b_vec = SIMD_::_mm256_maskloadu(b + i, REMAINDER);
+
+        dot_vec = SIMD_::_mm256_hmadd(a_vec, b_vec, dot_vec);
+    }
+
+    return SIMD_::_mm256_sum(dot_vec)
+}
 
 template<typename S, typename ContainerA, typename ContainerY>
 void add(const S k, const ContainerA& A, ContainerY& Y) {
@@ -682,6 +820,11 @@ void fmadd(const ContainerA& A, const ContainerB& B, const ContainerC& C, Contai
 
 template<typename ContainerA, typename ContainerB, typename ContainerC, typename ContainerY>
 void fmsub(const ContainerA& A, const ContainerB& B, const ContainerC& C, ContainerY& Y) {
+    using A_traits = container_traits<ContainerA>;
+    using B_traits = container_traits<ContainerB>;
+    using C_traits = container_traits<ContainerC>;
+    using Y_traits = container_traits<ContainerY>;
+
     using S = A_traits::element_type;
     using T = B_traits::element_type;
     using U = C_traits::element_type;
@@ -722,7 +865,57 @@ template<typename ContainerA, typename ContainerB, typename ContainerY>
 void cross(const ContainerA& A, const ContainerB& B, ContainerY& Y) {
     // this will be assuming A is row-major and B is col-major, A is row vector and B is col-major, or A is row major and B is col vector
     // could implement reverse, but would prob be slower because of load and store latency
-    
+    using A_traits = container_traits<ContainerA>;
+    using B_traits = container_traits<ContainerB>;
+    using Y_traits = container_traits<ContainerY>;
+
+    using S = A_traits::element_type;
+    using T = B_traits::element_type;
+    using U = Y_traits::element_type;
+
+    const S* const a = A.data();
+    const T* const b = B.data();
+    U* const y = Y.data();
+
+    if constexpr(A_traits::container_type == matrix && B_traits::container_type == matrix) {
+        const std::size_t N = A.rows();
+        const std::size_t K = A.cols();
+        const std::size_t M = B.cols();
+        
+        const std::size_t REMAINDER = K % WIDTH;
+        const std::size_t EDGE = K - REMAINDER;
+
+        for(std::size_t i = 0; i < N; ++i) {
+            const S* const a_row = a + i*K;
+
+            for(std::size_t j = 0; j < M; ++j) {
+                const T* const b_col = b + j*K;
+
+                std::size_t k = 0;
+                auto sum_vec = SIMD_::_mm256_setzero<U>();
+                for(; k < EDGE; k += 8) {
+                    const auto a_vec = SIMD_::_mm256_loadu(a_row + k);
+                    const auto b_vec = SIMD_::_mm256_loadu(b_col + k);
+
+                    sum_vec = SIMD_::_mm256_fmadd(a_vec, b_vec, sum_vec);
+                }
+
+                if(REMAINDER != 0) {
+                    const auto a_vec = SIMD_::_mm256_maskloadu(a_row + k, REMAINDER);
+                    const auto b_vec = SIMD_::_mm256_maskloadu(b_col + k, REMAINDER);
+
+                    sum_vec = SIMD_::_mm256_fmadd(a_vec, b_vec, sum_vec);
+                }
+
+                y[i*M + j] = SIMD_::_mm256_sum(sum_vec);
+            }
+        }
+    }
+    else if constexpr(A_traits::container_type == vector || B_traits::container_type == vector) {
+        const std::size_t N = Y.size();
+
+
+    }
 }
 
 template<typename T>
@@ -823,440 +1016,3 @@ float lpnorm(const S, const Vector<T>&);
 
 template<typename S, typename T>
 void lpnorm(const S, const Matrix<T>&, Vector<float>&);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-template<typename Container>
-void SIMD::setzero(Container& Y) {
-    using traits = container_traits<Container>;
-    using T = typename traits::element_type;
-
-    T* const y = Y.data();
-    
-    const std::size_t N = Y.size();
-    const std::size_t REMAINDER = N % WIDTH;
-    const std::size_t EDGE = N - REMAINDER;
-
-    std::size_t i = 0;
-    if constexpr(std::is_same_v<T, float>) {
-        const __m256 zero = _mm256_setzero_ps();
-
-        for(; i < EDGE; i += WIDTH)
-            _mm256_storeu_ps(y + i, zero);
-
-        if(REMAINDER != 0)
-            SIMD_::store_k(y + i, zero, REMAINDER);
-    } 
-    else if constexpr(std::is_same_v<T, int>) {
-        const __m256i zero = _mm256_setzero_si256();
-
-        for(; i < EDGE; i += WIDTH)
-            _mm256_storeu_si256(y + i, zero);
-
-        if(REMAINDER != 0)
-            SIMD_::store_k(y + i, zero, REMAINDER);
-    }
-}
-
-template<typename Container>
-Container::element_type sum(const Container&) {
-    using traits = container_traits<Container>;
-    using T = typename container_traits<Container>::element_type;
-
-    if constexpr(traits::container_type == container::vector) {
-        if constexpr(std::is_same_v<T, float>) {
-
-        } else if constexpr(std::is_same_v<T, int>) {
-
-        }
-    } else if constexpr(traits::container_type == container::matrix) {
-        if constexpr(std::is_same_v<T, float>) {
-            
-        } else if constexpr(std::is_same_v<T, int>) {
-
-        }
-    }
-}
-
-template<typename T>
-void sum(const Matrix<T>&, Vector<T>&) {
-    if constexpr(std::is_same_v<T, float>) {
-
-    } else if constexpr(std::is_same_v<T, int>) {
-
-    }
-}
-
-template<typename T>
-T dot(const Vector<T>&, const Vector<T>&) {}
-
-template<typename S, typename Container>
-void add(const S k, const Container& A, Container& Y) {
-    using A_traits = container_traits<A>;
-    using T = typename A_traits::element_type;
-    using Y_traits = container_traits<Y>;
-    using U = typename Y_traits::element_type;
-
-    const T* const a = A.data();
-    U* const y = Y.data();
-
-    const std::size_t N = A.size();
-    const std::size_t REMAINDER = N % WIDTH;
-    const std::size_t EDGE = N - REMAINDER;
-
-    std::size_t i = 0;
-    if constexpr(std::is_same_v<U, float>) {
-        __m256 k_vec = _mm256_set1_ps(k);
-        for(; i < EDGE; i += WIDTH) {
-            __m256 a_vec = _mm256_loadu_ps(a + i);
-            __m256 y_vec = _mm256_add_ps(k_vec, a_vec);
-
-            _mm256_storeu_ps(y + i);
-        }
-
-        if(REMAINDER != 0) {
-            __m256 a_vec = SIMD_::load_k(a + i, REMAINDER);
-            __m256 y_vec = _mm256_add_ps(k_vec, a_vec);
-
-            SIMD_::store_k(y + i, y_vec, REMAINDER);
-        }
-    } else if constexpr(std::is_same_v<U, int>) {
-        __m256i k_vec = _mm256_set1_epi32(k);
-        for(; i < EDGE; i += WIDTH) {
-            __m256i a_vec = _mm256_loadu_epi32(a + i);
-            __m256i y_vec = _mm256_add_epi32(k_vec, a_vec);
-
-            _mm256_storeu_epi32(y + i);
-        }
-
-        if(REMAINDER != 0) {
-            __m256i a_vec = SIMD_::load_k(a + i, REMAINDER);
-            __m256i y_vec = _mm256_add_epi32(k_vec, a_vec);
-
-            SIMD_::store_k(y + i, y_vec, REMAINDER);
-        }
-    }
-}
-
-template<typename S, typename Container>
-void sub(const S k, const Container& A, Container& Y) {
-    using A_traits = container_traits<A>;
-    using T = typename A_traits::element_type;
-    using Y_traits = container_traits<Y>;
-    using U = typename Y_traits::element_type;
-
-    const T* const a = A.data();
-    U* const y = Y.data();
-
-    const std::size_t N = A.size();
-    const std::size_t REMAINDER = N % WIDTH;
-    const std::size_t EDGE = N - REMAINDER;
-
-    std::size_t i = 0;
-    if constexpr(std::is_same_v<U, float>) {
-        __m256 k_vec = _mm256_set1_ps(k);
-        for(; i < EDGE; i += WIDTH) {
-            __m256 a_vec = _mm256_loadu_ps(a + i);
-            __m256 y_vec = _mm256_sub_ps(k_vec, a_vec);
-
-            _mm256_storeu_ps(y + i);
-        }
-
-        if(REMAINDER != 0) {
-            __m256 a_vec = SIMD_::load_k(a + i, REMAINDER);
-            __m256 y_vec = _mm256_sub_ps(k_vec, a_vec);
-
-            SIMD_::store_k(y + i, y_vec, REMAINDER);
-        }
-    } else if constexpr(std::is_same_v<U, int>) {
-        __m256i k_vec = _mm256_set1_epi32(k);
-        for(; i < EDGE; i += WIDTH) {
-            __m256i a_vec = _mm256_loadu_epi32(a + i);
-            __m256i y_vec = _mm256_sub_epi32(k_vec, a_vec);
-
-            _mm256_storeu_epi32(y + i);
-        }
-
-        if(REMAINDER != 0) {
-            __m256i a_vec = SIMD_::load_k(a + i, REMAINDER);
-            __m256i y_vec = _mm256_sub_epi32(k_vec, a_vec);
-
-            SIMD_::store_k(y + i, y_vec, REMAINDER);
-        }
-    }
-}
-
-template<typename Container, typename S>
-void sub(const Container& A, const S k, Container& Y) {
-    using A_traits = container_traits<A>;
-    using T = typename A_traits::element_type;
-    using Y_traits = container_traits<Y>;
-    using U = typename Y_traits::element_type;
-
-    const T* const a = A.data();
-    U* const y = Y.data();
-
-    const std::size_t N = A.size();
-    const std::size_t REMAINDER = N % WIDTH;
-    const std::size_t EDGE = N - REMAINDER;
-
-    std::size_t i = 0;
-    if constexpr(std::is_same_v<U, float>) {
-        __m256 k_vec = _mm256_set1_ps(k);
-        for(; i < EDGE; i += WIDTH) {
-            __m256 a_vec = _mm256_loadu_ps(a + i);
-            __m256 y_vec = _mm256_sub_ps(a_vec, k_vec);
-
-            _mm256_storeu_ps(y + i);
-        }
-
-        if(REMAINDER != 0) {
-            __m256 a_vec = SIMD_::load_k(a + i, REMAINDER);
-            __m256 y_vec = _mm256_sub_ps(a_vec, k_vec);
-
-            SIMD_::store_k(y + i, y_vec, REMAINDER);
-        }
-    } else if constexpr(std::is_same_v<U, int>) {
-        __m256i k_vec = _mm256_set1_epi32(k);
-        for(; i < EDGE; i += WIDTH) {
-            __m256i a_vec = _mm256_loadu_epi32(a + i);
-            __m256i y_vec = _mm256_sub_epi32(a_vec, k_vec);
-
-            _mm256_storeu_epi32(y + i);
-        }
-
-        if(REMAINDER != 0) {
-            __m256i a_vec = SIMD_::load_k(a + i, REMAINDER);
-            __m256i y_vec = _mm256_sub_epi32(a_vec, k_vec);
-
-            SIMD_::store_k(y + i, y_vec, REMAINDER);
-        }
-    }
-}
-
-template<typename S, typename Container>
-void mul(const S k, const Container& A, Container& Y) {
-    using A_traits = container_traits<A>;
-    using T = typename A_traits::element_type;
-    using Y_traits = container_traits<Y>;
-    using U = typename Y_traits::element_type;
-
-    const T* const a = A.data();
-    U* const y = Y.data();
-
-    const std::size_t N = A.size();
-    const std::size_t REMAINDER = N % WIDTH;
-    const std::size_t EDGE = N - REMAINDER;
-
-    std::size_t i = 0;
-    if constexpr(std::is_same_v<U, float>) {
-        __m256 k_vec = _mm256_set1_ps(k);
-        for(; i < EDGE; i += WIDTH) {
-            __m256 a_vec = _mm256_loadu_ps(a + i);
-            __m256 y_vec = _mm256_mul_ps(k_vec, a_vec);
-
-            _mm256_storeu_ps(y + i);
-        }
-
-        if(REMAINDER != 0) {
-            __m256 a_vec = SIMD_::load_k(a + i, REMAINDER);
-            __m256 y_vec = _mm256_sub_ps(k_vec, a_vec);
-
-            SIMD_::store_k(y + i, y_vec, REMAINDER);
-        }
-    } else if constexpr(std::is_same_v<U, int>) {
-        __m256i k_vec = _mm256_set1_epi32(k);
-        for(; i < EDGE; i += WIDTH) {
-            __m256i a_vec = _mm256_loadu_epi32(a + i);
-            __m256i y_vec = _mm256_sub_epi32(k_vec, a_vec);
-
-            _mm256_storeu_epi32(y + i);
-        }
-
-        if(REMAINDER != 0) {
-            __m256i a_vec = SIMD_::load_k(a + i, REMAINDER);
-            __m256i y_vec = _mm256_sub_epi32(k_vec, a_vec);
-
-            SIMD_::store_k(y + i, y_vec, REMAINDER);
-        }
-    }
-}
-
-template<typename Container>
-void div(const float k, const Container& A, Container& Y) {
-    using A_traits = container_traits<Container>;
-    using T = typename A_traits::element_type;
-    using Y_traits = container_traits<Container>;
-    using U = typename Y_traits::element_type;
-
-    const T* const a = A.data();
-    U* const y = Y.data();
-
-    const std::size_t N = A.size();
-    const std::size_t REMAINDER = N % WIDTH;
-    const std::size_t EDGE = N - REMAINDER;
-
-    std::size_t i = 0;
-    if constexpr(std::is_same_v<U, float>) {
-        __m256 k_vec = _mm256_set1_ps(k);
-        for(; i < EDGE; i += WIDTH) {
-            __m256 a_vec = _mm256_loadu_ps(a + i);
-            __m256 y_vec = _mm256_div_ps(k_vec, a_vec);
-
-            _mm256_storeu_ps(y + i);
-        }
-
-        if(REMAINDER != 0) {
-            __m256 a_vec = SIMD_::load_k(a + i, REMAINDER);
-            __m256 y_vec = _mm256_div_ps(k_vec, a_vec);
-
-            SIMD_::store_k(y + i, y_vec, REMAINDER);
-        }
-    } else if constexpr(std::is_same_v<U, int>) {
-        __m256i k_vec = _mm256_set1_epi32(k);
-        for(; i < EDGE; i += WIDTH) {
-            __m256i a_vec = _mm256_loadu_epi32(a + i);
-            __m256i y_vec = _mm256_div_epi32(k_vec, a_vec);
-
-            _mm256_storeu_epi32(y + i);
-        }
-
-        if(REMAINDER != 0) {
-            __m256i a_vec = SIMD_::load_k(a + i, REMAINDER);
-            __m256i y_vec = _mm256_div_epi32(k_vec, a_vec);
-
-            SIMD_::store_k(y + i, y_vec, REMAINDER);
-        }
-    }
-}
-
-template<typename Container, typename S>
-void div(const Container&, const S, Container&) {
-    using traits = container_traits<Container>;
-    using T = typename container_traits<Container>::element_type;
-
-    const T* const a = A.data();
-    T* const y = Y.data();
-
-    const std::size_t N = A.size();
-    const std::size_t REMAINDER = N % WIDTH;
-    const std::size_t EDGE = N - REMAINDER;
-
-    std::size_t i = 0;
-    __m256 k_vec = _mm256_set1_ps(k);
-    for(; i < EDGE; i += WIDTH) {
-        __m256 a_vec = _mm256_loadu_ps(a + i);
-        __m256 y_vec = _mm256_div_ps(a_vec, k_vec);
-
-        _mm256_storeu_ps(y + i);
-    }
-
-    if(REMAINDER != 0) {
-        __m256 a_vec = SIMD_::load_k(a + i, REMAINDER);
-        __m256 y_vec = _mm256_div_ps(a_vec, k_vec);
-
-        SIMD_::store_k(y + i, y_vec, REMAINDER);
-    }
-}
-
-template<typename ContainerA, typename ContainerB, typename ContainerY>
-void add(const ContainerA&, const ContainerB&, ContainerY&) {
-    using traits = container_traits<Container>;
-    using T = typename container_traits<Container>::element_type;
-
-    if constexpr(traits::container_type == container::vector) {
-        if constexpr(std::is_same_v<T, float>) {
-
-        } else if constexpr(std::is_same_v<T, int>) {
-
-        }
-    } else if constexpr(traits::container_type == container::matrix) {
-        if constexpr(std::is_same_v<T, float>) {
-            
-        } else if constexpr(std::is_same_v<T, int>) {
-
-        }
-    }
-}
-
-template<typename Container>
-void sub(const Container&, const Container&, Container&) {
-    using traits = container_traits<Container>;
-    using T = typename container_traits<Container>::element_type;
-
-    if constexpr(traits::container_type == container::vector) {
-        if constexpr(std::is_same_v<T, float>) {
-
-        } else if constexpr(std::is_same_v<T, int>) {
-
-        }
-    } else if constexpr(traits::container_type == container::matrix) {
-        if constexpr(std::is_same_v<T, float>) {
-            
-        } else if constexpr(std::is_same_v<T, int>) {
-
-        }
-    }
-}
-
-template<typename Container>
-void mul(const Container&, const Container&, Container&) {
-    using traits = container_traits<Container>;
-    using T = typename container_traits<Container>::element_type;
-
-    if constexpr(traits::container_type == container::vector) {
-        if constexpr(std::is_same_v<T, float>) {
-
-        } else if constexpr(std::is_same_v<T, int>) {
-
-        }
-    } else if constexpr(traits::container_type == container::matrix) {
-        if constexpr(std::is_same_v<T, float>) {
-            
-        } else if constexpr(std::is_same_v<T, int>) {
-
-        }
-    }
-}
-
-template<typename Container>
-void div(const Container&, const Container&, Container&) {
-    using traits = container_traits<Container>;
-    using T = typename container_traits<Container>::element_type;
-
-    if constexpr(traits::container_type == container::vector) {
-        if constexpr(std::is_same_v<T, float>) {
-
-        } else if constexpr(std::is_same_v<T, int>) {
-
-        }
-    } else if constexpr(traits::container_type == container::matrix) {
-        if constexpr(std::is_same_v<T, float>) {
-            
-        } else if constexpr(std::is_same_v<T, int>) {
-
-        }
-    }
-}

@@ -82,12 +82,18 @@ namespace Wally::Abstract::SIMD {
         __m256 _mm256_pow(__m256, __m256i);
         __m256 _mm256_pow(__m256i, __m256);
         __m256 _mm256_pow(__m256i, __m256i);
+
+        __m256 _mm256_abs(__m256);
+        __m256i _mm256_abs(__m256i);
+
+        __m256 _mm256_rcp(__m256);
+        __m256 _mm256_rcp(__m256i);
     }
     constexpr std::size_t WIDTH = 8;
 
     // Sets every element in the container to 0
-    template<typename ContainerY>
-    void setzero(ContainerY&);
+    template<Container ContainerA>
+    void setzero(ContainerA&);
 
     template<typename T>
     T sum(const Vector<T>&);
@@ -98,51 +104,51 @@ namespace Wally::Abstract::SIMD {
     T dot(const Vector<T>&, const Vector<T>&);
     
     // Scalar broadcast operations
-    template<typename S, typename ContainerA, typename ContainerY>
+    template<typename S, Container ContainerA, Container ContainerY>
     void add(const S, const ContainerA&, ContainerY&);
-    template<typename S, typename ContainerA, typename ContainerY>
+    template<typename S, Container ContainerA, Container ContainerY>
     void sub(const S, const ContainerA&, ContainerY&);
-    template<typename ContainerA, typename S, typename ContainerY>
+    template<Container ContainerA, typename S, Container ContainerY>
     void sub(const ContainerA&, const S, ContainerY&);
-    template<typename S, typename ContainerA, typename ContainerY>
+    template<typename S, Container ContainerA, Container ContainerY>
     void mul(const S, const ContainerA&, ContainerY&);
-    template<typename S, typename ContainerA, typename ContainerY>
+    template<typename S, Container ContainerA, Container ContainerY>
     void div(const S, const ContainerA&, ContainerY&);
-    template<typename ContainerA, typename S, typename ContainerY>
+    template<Container ContainerA, typename S, Container ContainerY>
     void div(const ContainerA&, const S, ContainerY&);
 
     // Element-wise operations
-    template<typename ContainerA, typename ContainerB, typename ContainerY>
+    template<Container ContainerA, Container ContainerB, Container ContainerY>
     void add(const ContainerA&, const ContainerB&, ContainerY&);
-    template<typename ContainerA, typename ContainerB, typename ContainerY>
+    template<Container ContainerA, Container ContainerB, Container ContainerY>
     void sub(const ContainerA&, const ContainerB&, ContainerY&);
-    template<typename ContainerA, typename ContainerB, typename ContainerY>
+    template<Container ContainerA, Container ContainerB, Container ContainerY>
     void mul(const ContainerA&, const ContainerB&, ContainerY&);
-    template<typename ContainerA, typename ContainerB, typename ContainerY>
+    template<Container ContainerA, Container ContainerB, Container ContainerY>
     void div(const ContainerA&, const ContainerB&, ContainerY&);
 
     // Compound scalar operations
-    template<typename ContainerY, typename S>
+    template<Container ContainerY, typename S>
     void add(ContainerY&, const S);
-    template<typename ContainerY, typename S>
+    template<Container ContainerY, typename S>
     void sub(ContainerY&, const S);
-    template<typename ContainerY, typename S>
+    template<Container ContainerY, typename S>
     void mul(ContainerY&, const S);
-    template<typename ContainerY, typename S>
+    template<Container ContainerY, typename S>
     void div(ContainerY&, const S);
 
     // Fused operations
-    template<typename ContainerA, typename ContainerB, typename ContainerC, typename ContainerY>
+    template<Container ContainerA, Container ContainerB, Container ContainerC, Container ContainerY>
     void fmadd(const ContainerA&, const ContainerB&, const ContainerC&, ContainerY&);
-    template<typename ContainerA, typename ContainerB, typename ContainerC, typename ContainerY>
+    template<Container ContainerA, Container ContainerB, Container ContainerC, Container ContainerY>
     void fmsub(const ContainerA&, const ContainerB&, const ContainerC&, ContainerY&);
-    template<typename ContainerY, typename S, typename ContainerA>
+    template<Container ContainerY, typename S, Container ContainerA>
     void fmadd(ContainerY&, const S, const ContainerA&);
-    template<typename ContainerY, typename S, typename ContainerA>
+    template<Container ContainerY, typename S, Container ContainerA>
     void fmsub(ContainerY&, const S, const ContainerA&);
 
     // Cross product
-    template<typename ContainerA, typename ContainerB, typename ContainerY>
+    template<Container ContainerA, Container ContainerB, Container ContainerY>
     void cross(const ContainerA&, const ContainerB&, ContainerY&);
 
     // Square sum
@@ -152,46 +158,13 @@ namespace Wally::Abstract::SIMD {
     void sqsum(const Matrix<T>&, Vector<T>&);
 
     // Lp norm
-    template<typename S, typename T>
-    float lpnorm(const S, const Vector<T>&);
-    template<typename S, typename T>
-    void lpnorm(const S, const Matrix<T>&, Vector<float>&);
+    template<typename T>
+    float lpnorm(const float, const Vector<T>&);
+    template<typename T>
+    void lpnorm(const float, const Matrix<T>&, Vector<float>&);
 
-    
-
-
-
-
-    // cross product, sum, dot, l1 norm, l2 norm, lp norm, squared sum
-
-
-
-
-
-
-
-
-
-
-
-
-    /*
-    float sum(const Matrix&);
-    float dot(const Matrix&, const Matrix&);
-
-    float square_sum(const Matrix&);                                    // used for mse calculation
-
-    void sigmoid(Matrix&);                                              // used for binary logistic regression
-    void softmax(Matrix&);                                              // used for multi logistic regression
-
-    void mult_comp_add(Matrix&, float, const Matrix&);
-    void mult_comp_sub(Matrix&, float, const Matrix&);                  // used for gradient descent
-
-    void cross_mul_bycol(const Matrix&, const Matrix&, Matrix&);        // used for prediction when #features >> #classes => #rows >> #cols
-    void cross_mul_byrow(const Matrix&, const Matrix&, Matrix&);        // used for prediction when #features << #classes => #rows << #cols
-    void cross_mul_to_N(const Matrix&, const Matrix&, Matrix&);         // used for prediction on regression models
-    void cross_mul_to_M(const Matrix&, const Matrix&, Matrix&);         // used for gradient since error vector is 1d
-    */
+    // Sigmoid and softmax
+    void softmax(const Matrix<float>&, const Vector<int>&, Matrix<float>&);
 }
 
 #endif

@@ -182,22 +182,40 @@ __m256 SIMD::SIMD_::_mm256_fmsub(__m256i a, __m256i b, __m256i c) {
     return _mm256_fmsub_ps(af, bf, cf);
 }
 
-__m256 _mm256_pow(__m256 a, __m256 b) { return _mm256_pow_ps(a, b); }
+__m256 SIMD::SIMD_::_mm256_pow(__m256 a, __m256 b) { return _mm256_pow_ps(a, b); }
 
-__m256 _mm256_pow(__m256 a, __m256i b) {
+__m256 SIMD::SIMD_::_mm256_pow(__m256 a, __m256i b) {
     __m256 bf = _mm256_cvtepi32_ps(b);
     return _mm256_pow_ps(a, bf);
 }
 
-__m256 _mm256_pow(__m256i a, __m256 b) {
+__m256 SIMD::SIMD_::_mm256_pow(__m256i a, __m256 b) {
     __m256 af = _mm256_cvtepi32_ps(a);
     return _mm256_pow_ps(af, b);
 }
 
-__m256 _mm256_pow(__m256i a, __m256i b) {
+__m256 SIMD::SIMD_::_mm256_pow(__m256i a, __m256i b) {
     __m256 af = _mm256_cvtepi32_ps(a);
     __m256 bf = _mm256_cvtepi32_ps(b);
     return _mm256_pow_ps(af, bf);
+}
+
+__m256 SIMD::SIMD_::_mm256_abs(__m256 a) {
+    const __m256 sign_vec = _mm256_set1_ps(-0.0f);
+    return _mm256_andnot_ps(sign_vec, a);
+}
+
+__m256i SIMD::SIMD_::_mm256_abs(__m256i a) {
+    return _mm256_abs_epi32(a);
+}
+
+__m256 SIMD::SIMD_::_mm256_rcp(__m256 a) {
+    return _mm256_rcp_ps(a);
+}
+
+__m256 SIMD::SIMD_::_mm256_rcp(__m256i a) {
+    __m256 af = _mm256_cvtepi32_ps(a);
+    return _mm256_rcp_ps(af);
 }
 
 template<typename ContainerY>
@@ -1011,8 +1029,40 @@ void sqsum(const Matrix<T>& A, Vector<T>& Y) {
     }
 }
 
-template<typename S, typename T>
-float lpnorm(const S, const Vector<T>&);
+template<typename T>
+float lpnorm(const float p, const Vector<T>& A) {
+    const T* const a = A.data();
+
+    const std::size_t N = A.size();
+    const std::size_t REMAINDER = N % WIDTH;
+    const std::size_t EDGE = N - REMAINDER;
+
+    std::size_t i = 0;
+    const __m256 p_vec = SIMD_::_mm256_set1(p);
+    __m256 sum_vec = SIMD_::_mm256_setzero<float>();
+    for(; i < EDGE; i += 8) {
+        auto a_vec = SIMD_::_mm256_loadu(a + i);
+
+        a_vec = SIMD_::_mm256_abs(a_vec);
+        const __m256 pow_vec = SIMD_::_mm256_pow(a_vec, p_vec);
+        sum_vec = SIMD_::_mm256_add(pow_vec, sum_vec);
+    }
+
+    if(REMAINDER != 0) {
+        auto a_vec = SIMD_::_mm256_maskloadu(a + i, REMAINDER);
+
+        a_vec = SIMD_::_mm256_abs(a_vec);
+        const __m256 pow_vec = SIMD_::_mm256_pow(a_vec, p_vec);
+        sum_vec = SIMD_::_mm256_add(pow_vec, sum_vec);
+    }
+
+    float sum = SIMD_::_mm256_sum(sum_vec);
+    sum_vec = SIMD_::_mm256_set1(sum);
+
+    __m256 rcp_vec = SIMD_::_mm256_rcp(p_vec);
+    __m256 norm_vec = SIMD_::_mm256_pow(sum_vec, )
+    return 
+}
 
 template<typename S, typename T>
 void lpnorm(const S, const Matrix<T>&, Vector<float>&);
